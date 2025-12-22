@@ -1,0 +1,46 @@
+# Build directories
+build/
+dist/
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+*.exe
+
+# CMake
+CMakeFiles/
+cmake_install.cmake
+CMakeCache.txt
+*.cmake
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.env
+
+# IDF
+sdkconfig.old
+.idf_build_monitor_log
+
+# Binaries
+*.bin
+*.elf
+*.map
+
+# Logs
+*.log
+
+# OS
+Thumbs.db
+.DS_Store
