@@ -44,3 +44,7 @@ sdkconfig.old
 # OS
 Thumbs.db
 .DS_Store
+
+#ENV
+main/Kconfig.projbuild
+sdkconfig

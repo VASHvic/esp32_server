@@ -1,10 +1,3 @@
-/*
- * ESP32 Web Server - Monitor de Sistema en Tiempo Real
- * 
- * Este programa crea un servidor web HTTP que muestra información del sistema
- * del ESP32 en tiempo real, incluyendo temperatura, WiFi, memoria y uptime.
- */
-
 #include <stdio.h>
 #include <string.h>
 #include "freertos/FreeRTOS.h"
@@ -21,17 +14,40 @@
 #include "esp_chip_info.h"
 #include "esp_mac.h"
 #include "soc/rtc.h"
+#include "driver/gpio.h"
+#include "config.h"
 
-#define WIFI_SSID      "WIFI_SSID"
-#define WIFI_PASSWORD  "WIFI_PASSWORD"
 
 static const char *TAG = "ESP32_WebServer";
 static EventGroupHandle_t s_wifi_event_group;
 #define WIFI_CONNECTED_BIT BIT0
 #define WIFI_FAIL_BIT      BIT1
-
+#define LED_PIN        GPIO_NUM_21
 static int s_retry_num = 0;
 #define MAX_RETRY 5
+
+static bool led_state = false;
+
+void led_init(void)
+{
+    gpio_config_t io_conf = {
+        .intr_type = GPIO_INTR_DISABLE,
+        .mode = GPIO_MODE_OUTPUT,
+        .pin_bit_mask = (1ULL << LED_PIN),
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+    };
+    gpio_config(&io_conf);
+    gpio_set_level(LED_PIN, 0);
+    led_state = false;
+}
+
+void led_set_state(bool state)
+{
+    led_state = state;
+    gpio_set_level(LED_PIN, state ? 1 : 0);
+    ESP_LOGI(TAG, "LED %s", state ? "ENCENDIDO" : "APAGADO");
+}
 
 static void wifi_event_handler(void* arg, esp_event_base_t event_base,
                                 int32_t event_id, void* event_data)
@@ -165,6 +181,9 @@ void get_system_info_json(char* buffer, size_t buffer_size)
         "  \"uptime\": {\n"
         "    \"seconds\": %d,\n"
         "    \"formatted\": \"%02d:%02d:%02d\"\n"
+        "  },\n"
+        "  \"led\": {\n"
+        "    \"state\": %s\n"
         "  }\n"
         "}",
         chip_info.cores,
@@ -180,7 +199,8 @@ void get_system_info_json(char* buffer, size_t buffer_size)
         (unsigned long)min_free_heap,
         free_heap / (1024.0 * 1024.0),
         uptime_seconds,
-        hours, minutes, seconds
+        hours, minutes, seconds,
+        led_state ? "true" : "false"
     );
 }
 
@@ -270,7 +290,6 @@ static const char* html_page =
 "            display: block;\n"
 "            width: 100%;\n"
 "            padding: 15px;\n"
-"            background: linear-gradient(135deg, #f87171 0%, #dc2626 100%);\n"
 "            color: white;\n"
 "            border: none;\n"
 "            border-radius: 10px;\n"
@@ -278,14 +297,47 @@ static const char* html_page =
 "            font-weight: 600;\n"
 "            cursor: pointer;\n"
 "            transition: all 0.3s ease;\n"
+"            margin-bottom: 10px;\n"
+"        }\n"
+"        .btn-restart {\n"
+"            background: linear-gradient(135deg, #f87171 0%, #dc2626 100%);\n"
 "            box-shadow: 0 4px 15px rgba(248, 113, 113, 0.3);\n"
+"        }\n"
+"        .btn-led-on {\n"
+"            background: linear-gradient(135deg, #4ade80 0%, #22c55e 100%);\n"
+"            box-shadow: 0 4px 15px rgba(74, 222, 128, 0.3);\n"
+"        }\n"
+"        .btn-led-off {\n"
+"            background: linear-gradient(135deg, #94a3b8 0%, #64748b 100%);\n"
+"            box-shadow: 0 4px 15px rgba(148, 163, 184, 0.3);\n"
 "        }\n"
 "        .btn:hover {\n"
 "            transform: translateY(-2px);\n"
-"            box-shadow: 0 6px 20px rgba(248, 113, 113, 0.4);\n"
 "        }\n"
 "        .btn:active {\n"
 "            transform: translateY(0);\n"
+"        }\n"
+"        .led-status {\n"
+"            display: flex;\n"
+"            align-items: center;\n"
+"            justify-content: center;\n"
+"            margin: 15px 0;\n"
+"            font-size: 1.2em;\n"
+"        }\n"
+"        .led-indicator {\n"
+"            width: 20px;\n"
+"            height: 20px;\n"
+"            border-radius: 50%;\n"
+"            margin-left: 10px;\n"
+"            transition: all 0.3s ease;\n"
+"        }\n"
+"        .led-indicator.on {\n"
+"            background-color: #22c55e;\n"
+"            box-shadow: 0 0 20px #22c55e;\n"
+"        }\n"
+"        .led-indicator.off {\n"
+"            background-color: #64748b;\n"
+"            box-shadow: 0 0 5px #64748b;\n"
 "        }\n"
 "        @media (max-width: 768px) {\n"
 "            h1 { font-size: 1.8em; }\n"
@@ -362,8 +414,18 @@ static const char* html_page =
 "            </div>\n"
 "            \n"
 "            <div class='card'>\n"
+"                <div class='card-title'>💡 Control LED (Pin 21)</div>\n"
+"                <div class='led-status'>\n"
+"                    <span>Estado:</span>\n"
+"                    <div class='led-indicator off' id='led-indicator'></div>\n"
+"                </div>\n"
+"                <button class='btn btn-led-on' onclick='toggleLED(true)'>🔆 Encender LED</button>\n"
+"                <button class='btn btn-led-off' onclick='toggleLED(false)'>🔅 Apagar LED</button>\n"
+"            </div>\n"
+"            \n"
+"            <div class='card'>\n"
 "                <div class='card-title'>⚡ Control</div>\n"
-"                <button class='btn' onclick='restartESP()'>Reiniciar ESP32</button>\n"
+"                <button class='btn btn-restart' onclick='restartESP()'>Reiniciar ESP32</button>\n"
 "            </div>\n"
 "        </div>\n"
 "    </div>\n"
@@ -389,10 +451,44 @@ static const char* html_page =
 "                document.getElementById('cores').textContent = data.chip.cores;\n"
 "                document.getElementById('freq').textContent = data.chip.frequency + ' MHz';\n"
 "                document.getElementById('revision').textContent = data.chip.revision;\n"
+"                \n"
+"                // Actualizar estado del LED\n"
+"                const ledIndicator = document.getElementById('led-indicator');\n"
+"                if (data.led.state) {\n"
+"                    ledIndicator.className = 'led-indicator on';\n"
+"                } else {\n"
+"                    ledIndicator.className = 'led-indicator off';\n"
+"                }\n"
 "            } catch (error) {\n"
 "                document.getElementById('status').textContent = '❌ Error de conexión';\n"
 "                document.getElementById('status').className = 'status error';\n"
 "                console.error('Error:', error);\n"
+"            }\n"
+"        }\n"
+"        \n"
+"        async function toggleLED(state) {\n"
+"            try {\n"
+"                const response = await fetch('/api/led', {\n"
+"                    method: 'POST',\n"
+"                    headers: {\n"
+"                        'Content-Type': 'application/json'\n"
+"                    },\n"
+"                    body: JSON.stringify({ state: state })\n"
+"                });\n"
+"                \n"
+"                if (response.ok) {\n"
+"                    // Actualizar inmediatamente la UI\n"
+"                    const ledIndicator = document.getElementById('led-indicator');\n"
+"                    if (state) {\n"
+"                        ledIndicator.className = 'led-indicator on';\n"
+"                    } else {\n"
+"                        ledIndicator.className = 'led-indicator off';\n"
+"                    }\n"
+"                    // Actualizar todos los datos\n"
+"                    fetchData();\n"
+"                }\n"
+"            } catch (error) {\n"
+"                console.error('Error al controlar LED:', error);\n"
 "            }\n"
 "        }\n"
 "        \n"
@@ -434,11 +530,39 @@ static esp_err_t data_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
+static esp_err_t led_handler(httpd_req_t *req)
+{
+    char content[100];
+    int ret = httpd_req_recv(req, content, sizeof(content));
+    
+    if (ret <= 0) {
+        if (ret == HTTPD_SOCK_ERR_TIMEOUT) {
+            httpd_resp_send_408(req);
+        }
+        return ESP_FAIL;
+    }
+    
+    content[ret] = '\0';
+    
+    bool new_state = false;
+    if (strstr(content, "\"state\":true") != NULL || strstr(content, "\"state\": true") != NULL) {
+        new_state = true;
+    }
+    
+    led_set_state(new_state);
+    
+    char response[50];
+    snprintf(response, sizeof(response), "{\"status\":\"ok\",\"led_state\":%s}", new_state ? "true" : "false");
+    
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, response, strlen(response));
+    return ESP_OK;
+}
+
 static esp_err_t restart_handler(httpd_req_t *req)
 {
     httpd_resp_sendstr(req, "{\"status\":\"restarting\"}");
     
-    // Reiniciar después de un pequeño delay
     vTaskDelay(1000 / portTICK_PERIOD_MS);
     esp_restart();
     
@@ -469,6 +593,14 @@ static httpd_handle_t start_webserver(void)
         };
         httpd_register_uri_handler(server, &data);
 
+        httpd_uri_t led = {
+            .uri       = "/api/led",
+            .method    = HTTP_POST,
+            .handler   = led_handler,
+            .user_ctx  = NULL
+        };
+        httpd_register_uri_handler(server, &led);
+
         httpd_uri_t restart = {
             .uri       = "/api/restart",
             .method    = HTTP_POST,
@@ -489,6 +621,9 @@ void app_main(void)
     ESP_LOGI(TAG, "===========================================");
     ESP_LOGI(TAG, "  ESP32 Web Server - Monitor de Sistema");
     ESP_LOGI(TAG, "===========================================");
+
+    ESP_LOGI(TAG, "Inicializando LED en pin 21...");
+    led_init();
 
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
